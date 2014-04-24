@@ -56,21 +56,27 @@ void timersub( struct timeval *a, struct timeval *b, struct timeval *res )
 
 /*---------------------------------------------------------------------------*/
 
-/* This counts the number of interrupts received */
-static int irqCount = 0;
+typedef struct {
+	int count;						/* Number of interrupts received */
+	struct timeval timeStamp[2];	/* Time-stamp of interrupts */
+} IRQData;
 
-/* This stores the time-stamp of the first two interrupts received */
-static struct timeval irqTime[2];
+static IRQData irqData;
+
+/*---------------------------------------------------------------------------*/
 
 /* Interrupt handler: called on rising/falling edge */
 static irqreturn_t gpioInterruptHandler( int irq, void *dev_id )
 {
+	/* Check the cookie */
+	if ( dev_id != &irqData ) return IRQ_HANDLED;
+
 	/* For the first two interrupts received, store the time-stamp */
-	if ( irqCount < 2 )
-		do_gettimeofday( &irqTime[irqCount] );
+	if ( irqData.count < 2 )
+		do_gettimeofday( &irqData.timeStamp[irqData.count] );
 
 	/* Count the number of interrupts received */
-	++irqCount;
+	++irqData.count;
 
     return IRQ_HANDLED;
 }
@@ -93,17 +99,19 @@ int measureRange(
 	unsigned long timeout = 0;	/* the timeout end in jiffies */
 
 	/* Initialise variables used by interrupt handler */
-	irqCount = 0;
-	memset( &irqTime, 0, sizeof(irqTime) );
+	irqData.count = 0;
+	memset( &irqData.timeStamp, 0, sizeof(irqData.timeStamp) );
 
 	/* Request an IRQ for the echo GPIO pin, so that we can measure the rising
 	 * and falling edge of the pulse from the ranger.
 	 */
     irq = gpio_to_irq( echo );
     if ( request_irq(
-		irq, gpioInterruptHandler,
-		IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
-		"hcsr04_irq", NULL
+		irq,
+		gpioInterruptHandler,
+		IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_SHARED,
+		"hcsr04_irq",
+		&irqData
 	) )
         return -1;
 
@@ -117,17 +125,17 @@ int measureRange(
 	timeout = jiffies + msecs_to_jiffies(60);
 
 	/* Wait until we have received two interrupts, or timed out */
-	while ( (irqCount < 2) && time_before(jiffies,timeout) ) {
+	while ( (irqData.count < 2) && time_before(jiffies,timeout) ) {
 		/* Sleep for 1ms */
 		msleep(1);
 	}
 
 	/* Free the interrupt */
-	free_irq( irq, NULL );
+	free_irq( irq, &irqData );
 
-	if ( irqCount == 2 ) {
+	if ( irqData.count == 2 ) {
 		/* Calculate pulse length */
-		timersub( &irqTime[1], &irqTime[0], &elapsed );
+		timersub( &irqData.timeStamp[1], &irqData.timeStamp[0], &elapsed );
 
 		/* Return the time period in microseconds. We ignore the tv_sec,
 		 * because the maximum delay should be less than 60ms
