@@ -32,6 +32,9 @@ module_param(trig, int, S_IRUGO);
 static int echo = 22;
 module_param(echo, int, S_IRUGO);
 
+/* Timeout for range finding operation in milliseconds */
+const long TIMEOUT_RANGE_FINDING = 60;
+
 /*---------------------------------------------------------------------------*/
 
 void timersub( struct timeval *a, struct timeval *b, struct timeval *res )
@@ -63,6 +66,9 @@ typedef struct {
 
 static IRQData irqData;
 
+/* Declare a wait queue to wait for interrupts */
+static DECLARE_WAIT_QUEUE_HEAD(wait);
+
 /*---------------------------------------------------------------------------*/
 
 /* Interrupt handler: called on rising/falling edge */
@@ -77,6 +83,10 @@ static irqreturn_t gpioInterruptHandler( int irq, void *dev_id )
 
 	/* Count the number of interrupts received */
 	++irqData.count;
+	
+	/* If we have received two interrupts, wake up */
+	if ( irqData.count > 1 )
+	    wake_up_interruptible( &wait );
 
     return IRQ_HANDLED;
 }
@@ -95,8 +105,6 @@ int measureRange(
 
 	struct timeval elapsed;		/* used to store elapsed time */
 	int irq = 0;				/* the IRQ number */
-
-	unsigned long timeout = 0;	/* the timeout end in jiffies */
 
 	/* Initialise variables used by interrupt handler */
 	irqData.count = 0;
@@ -121,14 +129,13 @@ int measureRange(
 	udelay(10);
 	gpio_set_value(trig, 0);
 
-	/* Calculate the end time in jiffies when we should time out */
-	timeout = jiffies + msecs_to_jiffies(60);
-
-	/* Wait until we have received two interrupts, or timed out */
-	while ( (irqData.count < 2) && time_before(jiffies,timeout) ) {
-		/* Sleep for 1ms */
-		msleep(1);
-	}
+	/* Wait until we have received two interrupts (indicating that
+	 * range finding has completed), or we have timed out
+	 */
+	wait_event_interruptible_timeout(
+	    wait, 0,
+	    msecs_to_jiffies(TIMEOUT_RANGE_FINDING)
+	);
 
 	/* Free the interrupt */
 	free_irq( irq, &irqData );
