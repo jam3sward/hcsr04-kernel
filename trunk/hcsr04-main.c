@@ -15,6 +15,7 @@
 #include <linux/gpio.h>
 #include <linux/interrupt.h>
 #include <linux/time.h>
+#include <linux/ktime.h>
 #include <linux/delay.h>
 #include <linux/sched.h>
 #include <linux/irq.h>
@@ -37,31 +38,9 @@ const long TIMEOUT_RANGE_FINDING = 60;
 
 /*---------------------------------------------------------------------------*/
 
-void timersub( struct timeval *a, struct timeval *b, struct timeval *res )
-{
-	/* Perform the carry for the later subtraction by updating b */
-	if ( a->tv_usec < b->tv_usec ) {
-    	int nsec = (b->tv_usec - a->tv_usec) / 1000000 + 1;
-        b->tv_usec -= 1000000 * nsec;
-        b->tv_sec += nsec;
-	}
-
-	if ( a->tv_usec - b->tv_usec > 1000000 ) {
-        int nsec = (a->tv_usec - b->tv_usec) / 1000000;
-        b->tv_usec += 1000000 * nsec;
-        b->tv_sec -= nsec;
-    }
-
-    /* Compute the elapsed time */
-    res->tv_sec  = a->tv_sec  - b->tv_sec;
-    res->tv_usec = a->tv_usec - b->tv_usec;
-}
-
-/*---------------------------------------------------------------------------*/
-
 typedef struct {
-	int count;						/* Number of interrupts received */
-	struct timeval timeStamp[2];	/* Time-stamp of interrupts */
+	int count;                  /* Number of interrupts received */
+	ktime_t timeStamp[2];       /* Time-stamp of interrupts */
 } IRQData;
 
 static IRQData irqData;
@@ -74,12 +53,15 @@ static DECLARE_WAIT_QUEUE_HEAD(wait);
 /* Interrupt handler: called on rising/falling edge */
 static irqreturn_t gpioInterruptHandler( int irq, void *dev_id )
 {
+    /* Get the kernel time */
+    ktime_t timeStamp = ktime_get();
+
 	/* Check the cookie */
 	if ( dev_id != &irqData ) return IRQ_HANDLED;
 
 	/* For the first two interrupts received, store the time-stamp */
 	if ( irqData.count < 2 )
-		do_gettimeofday( &irqData.timeStamp[irqData.count] );
+	    irqData.timeStamp[irqData.count] = timeStamp;
 
 	/* Count the number of interrupts received */
 	++irqData.count;
@@ -103,7 +85,8 @@ int measureRange(
 	/* The speed of sound in mm/s */
 	const long speedSound_mms = 340270;
 
-	struct timeval elapsed;		/* used to store elapsed time */
+	ktime_t elapsed_kt;		    /* used to store elapsed time */
+	struct timeval elapsed_tv;  /* elapsed time as timeval */
 	int irq = 0;				/* the IRQ number */
 
 	/* Initialise variables used by interrupt handler */
@@ -142,19 +125,20 @@ int measureRange(
 
 	if ( irqData.count == 2 ) {
 		/* Calculate pulse length */
-		timersub( &irqData.timeStamp[1], &irqData.timeStamp[0], &elapsed );
+		elapsed_kt = ktime_sub( irqData.timeStamp[1], irqData.timeStamp[0] );
+		elapsed_tv = ktime_to_timeval( elapsed_kt );
 
 		/* Return the time period in microseconds. We ignore the tv_sec,
 		 * because the maximum delay should be less than 60ms
 		 */
 		if ( us != NULL )
-			*us = elapsed.tv_usec;
+			*us = elapsed_tv.tv_usec;
 
 		/* Return the distance, based on speed of sound and the elapsed
 		 * time in microseconds.
 		 */
 		if ( mm != NULL )
-			*mm = elapsed.tv_usec * speedSound_mms / 2000000;
+			*mm = elapsed_tv.tv_usec * speedSound_mms / 2000000;
 
 		/* Success */
 		return 1;
