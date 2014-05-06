@@ -48,6 +48,9 @@ static IRQData irqData;
 /* Declare a wait queue to wait for interrupts */
 static DECLARE_WAIT_QUEUE_HEAD(wait);
 
+/* Mutex used to prevent simultaneous access */
+static DEFINE_MUTEX(mutex);
+
 /*---------------------------------------------------------------------------*/
 
 /* Interrupt handler: called on rising/falling edge */
@@ -88,6 +91,10 @@ int measureRange(
 	ktime_t elapsed_kt;		    /* used to store elapsed time */
 	struct timeval elapsed_tv;  /* elapsed time as timeval */
 	int irq = 0;				/* the IRQ number */
+    int rangeComplete = 0;      /* indicates successful range finding */
+
+    /* Acquire the mutex before entering critical section */
+    mutex_lock( &mutex );
 
 	/* Initialise variables used by interrupt handler */
 	irqData.count = 0;
@@ -103,8 +110,12 @@ int measureRange(
 		IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_SHARED,
 		"hcsr04_irq",
 		&irqData
-	) )
+	) ) {
+        /* Release the mutex */
+        mutex_unlock( &mutex );
+
         return -1;
+    }
 
 	/* Transmit trigger pulse, lasting at least 10us */
 	gpio_set_value(trig, 0);
@@ -116,18 +127,27 @@ int measureRange(
 	 * range finding has completed), or we have timed out
 	 */
 	wait_event_interruptible_timeout(
-	    wait, 0,
+	    wait,
+        irqData.count == 2,
 	    msecs_to_jiffies(TIMEOUT_RANGE_FINDING)
 	);
 
 	/* Free the interrupt */
 	free_irq( irq, &irqData );
 
-	if ( irqData.count == 2 ) {
+    /* Have we successfully completed ranging? */
+    rangeComplete = (irqData.count == 2);
+
+    if ( rangeComplete ) {
 		/* Calculate pulse length */
 		elapsed_kt = ktime_sub( irqData.timeStamp[1], irqData.timeStamp[0] );
 		elapsed_tv = ktime_to_timeval( elapsed_kt );
+    }
 
+    /* Release the mutex */
+    mutex_unlock( &mutex );
+
+	if ( rangeComplete ) {
 		/* Return the time period in microseconds. We ignore the tv_sec,
 		 * because the maximum delay should be less than 60ms
 		 */
