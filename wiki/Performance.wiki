@@ -1,0 +1,16 @@
+#summary Performance testing
+
+= Performance =
+
+Results of some preliminary testing as a water level sensor in my Espresso machine.
+
+Test conditions:
+  * HC-SR04 transducers aimed straight down
+  * Water surface at approximately 55mm below the transducers
+
+Carried out 1000 range samples:
+  * Sample rate was 16.67Hz
+  * Minimum was 52mm
+  * Maximum was 59mm
+  * Average was 54.56mm
+  * Standard deviation was 0.67mm
