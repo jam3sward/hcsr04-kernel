@@ -1,0 +1,22 @@
+# Installing the HC-SR04 Kernel Module #
+
+Here is one way to add the driver to /lib/modules:
+```
+sudo -i
+mkdir /lib/modules/`uname -r`/kernel/drivers/hcsr04
+cp hcsr04.ko /lib/modules/`uname -r`/kernel/drivers/hcsr04
+depmod -a
+```
+
+To make it load at boot, we need to edit the /etc/modules file as follows:
+```
+sudo nano /etc/modules
+```
+
+Then we add the following lines to /etc/modules (in this example, the HC-SR04 is configured to use GPIO 22 for ECHO and GPIO 23 for TRIGGER):
+```
+# HC-SR04 ultrasonic range finder
+hcsr04 trig=23 echo=22
+```
+
+When the system is rebooted, the module should load automatically.
